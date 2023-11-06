@@ -1,0 +1,83 @@
+version: "3.9"
+
+services:
+  api-backend:
+    build: h2ogpt
+    container_name: backend
+    env_file:
+      - ./h2ogpt/.env
+    environment:
+      - H2OGPT_PORT=7860
+      - HF_DATASETS_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - H2OGPT_ENABLE_HEAP_ANALYTICS=False
+    restart: always
+    shm_size: '2gb'
+    ports:
+      - '7860:7860'
+    volumes:
+      - cache:/workspace/.cache
+      - save:/workspace/save
+      - ./h2ogpt/src:/workspace/src
+      - ./models:/models
+    command: /workspace/generate.py --allow_api=True --verbose=True --base_model=llama --model_path_llama=/models/mistral-7b-openorca.Q4_0.gguf --base_model=/models/mistral-7b-instruct-v0.1.Q4_0.gguf --max_seq_len=4096 --enable-heap-analytics=False --gradio_offline_level=1 --share=False
+    networks:
+      - h2ogpt-net
+  api:
+    build: 
+      context: gpt4all-api/gpt4all_api
+      dockerfile: Dockerfile.buildkit
+    container_name: api
+    restart: always #restart on error (usually code compilation from save during bad state)
+    ports:
+      - "4891:4891"
+    environment:
+      - APP_ENVIRONMENT=dev
+      - WEB_CONCURRENCY=2
+      - LOGLEVEL=debug
+      - PORT=4891
+      - model=/models/mistral-7b-instruct-v0.1.Q4_0.gguf
+      - inference_mode=cpu
+    depends_on:
+      - api-backend
+    networks:
+      - gpt4all-net
+      - h2ogpt-net
+    volumes:
+      - './gpt4all-api/gpt4all_api/app:/app'
+      - ./models:/models
+    command: ["/start-reload.sh"]
+  frontend:
+    build: autogpt
+    container_name: auto
+    env_file:
+      - autogpt/.env
+    ports:
+      - 8000:8000
+    volumes:
+      - ./autogpt:/app
+      - ./autogpt/docker-compose.yml:/app/docker-compose.yml:ro
+      - ./autogpt/Dockerfile:/app/Dockerfile:ro
+      - ./frontend:/frontend
+    depends_on:
+      - api-backend
+      - api
+    networks:
+      - gpt4all-net
+      - autogpt-net
+  front-builder:
+    build: frontend
+    container_name: front-builder
+    profiles: ["exclude-from-up"]
+    command: /app/build.sh
+    volumes:
+      - ./frontend:/app
+
+volumes:
+  cache:
+  save:
+  
+networks:
+  gpt4all-net:
+  autogpt-net:
+  h2ogpt-net:
